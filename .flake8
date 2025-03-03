@@ -1,0 +1,3 @@
+[flake8]
+disable-noqa = True
+ignore = E501,E302,E303,E502,E127,E225

@@ -6,7 +6,7 @@ termcolor
 flatten_dict
 h5py
 numpy
-mujoco==3.1.2
+mujoco # ==3.1.2 removed due to the compatibility for the mjx
 dm-control==1.0.16
 Pillow
 pink-noise-rl
