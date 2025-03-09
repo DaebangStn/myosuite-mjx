@@ -10,12 +10,21 @@ License :: Under Apache License, Version 2.0 (the "License"); you may not use th
 import copy
 import logging
 from typing import Any
+import sys
+import os
 
 import myosuite.utils.import_utils as import_utils
 from myosuite.utils.prompt_utils import prompt, Prompt
 import_utils.dm_control_isavailable()
 import_utils.mujoco_isavailable()
 import dm_control.mujoco as dm_mujoco
+import dm_control.mujoco.index
+
+# Import our patched version of struct_indexer
+from myosuite.physics.patched_index import struct_indexer as patched_struct_indexer
+
+# Apply the monkey patch
+dm_control.mujoco.index.struct_indexer = patched_struct_indexer
 
 from myosuite.renderer.mj_renderer import MJRenderer
 from myosuite.physics.sim_scene import SimScene
@@ -107,6 +116,7 @@ class DMSimScene(SimScene):
 
         TODO(michaelahn): Deprecate this in favor of dm_control's named methods.
         """
+        import mujoco
         mjlib = self.get_mjlib()
 
         def name2id(type_name, name):
@@ -128,6 +138,29 @@ class DMSimScene(SimScene):
                     raise Exception('Failed to save XML')
                 with open(filename, 'r') as f:
                     return f.read()
+
+        # Check if MuJoCo version is 3.1.x or earlier
+        mj_version = getattr(mujoco, '__version__', '0.0.0')
+        is_pre_3_2 = tuple(map(int, mj_version.split('.')[:2])) < (3, 2)
+        
+        # Handle flexible elements (flex_*) for MuJoCo 3.3.0 and above
+        if not is_pre_3_2:
+            # Create empty attributes for flex fields that exist in older versions
+            # but not in newer MuJoCo
+            if not hasattr(model, 'flex_xvert0'):
+                model.flex_xvert0 = None
+                
+            # Add other flex attributes that might be missing
+            flex_attributes = [
+                'flex_xvert0', 'flex_xvert', 'flex_vert', 'flex_edge', 
+                'flex_edgeadr', 'flex_edgenum', 'flex_elemadr', 'flex_elemedge',
+                'flex_elemnum', 'flex_elem', 'flex_face', 'flex_faceadr', 
+                'flex_facenum', 'flex_faceedge', 'flex_tendon', 'flex_tendonadr'
+            ]
+            
+            for attr in flex_attributes:
+                if not hasattr(model, attr):
+                    setattr(model, attr, None)
 
         if not hasattr(model, 'body_name2id'):
             model.body_name2id = lambda name: name2id('body', name)
@@ -151,14 +184,36 @@ class DMSimScene(SimScene):
             model.sensor_name2id = lambda name: name2id('sensor', name)
 
         if not hasattr(model, 'get_xml'):
-
             model.get_xml = lambda : get_xml()
 
 
     def _patch_mjdata_accessors(self, data):
         """Adds accessors to MjData objects to support mujoco_py API."""
+        import mujoco
+        
+        # Check if MuJoCo version is 3.1.x or earlier
+        mj_version = getattr(mujoco, '__version__', '0.0.0')
+        is_pre_3_2 = tuple(map(int, mj_version.split('.')[:2])) < (3, 2)
+        
+        # Add standard accessors
         if not hasattr(data, 'body_xpos'):
             data.body_xpos = data.xpos
 
         if not hasattr(data, 'body_xquat'):
             data.body_xquat = data.xquat
+            
+        # Handle flexible elements data for MuJoCo 3.3.0 and above
+        if not is_pre_3_2:
+            # Create empty attributes for flex data fields that exist in older versions
+            # but not in newer MuJoCo
+            flex_data_attributes = [
+                'flexvert_xpos', 'flexvert_xmat', 'flexvert_velp', 'flexvert_velr',
+                'flexedge_length', 'flexedge_velocity', 'flexedge_moment',
+                'flexface_area', 'flexface_normal', 'flexface_velocity',
+                'flex_state', 'flex_tensor', 'flex_velocity', 'flex_acceleration',
+                'flex_force'
+            ]
+            
+            for attr in flex_data_attributes:
+                if not hasattr(data, attr):
+                    setattr(data, attr, None)

@@ -20,6 +20,48 @@ class SimBackend(enum.Enum):
     """Simulation library types."""
     MUJOCO_PY = 0
     MUJOCO = 1
+    MJX = 2
+
+    # Check MuJoCo version
+    @staticmethod
+    def check_mujoco_version():
+        try:
+            import mujoco
+            mj_version = getattr(mujoco, '__version__', '0.0.0')
+            version_parts = tuple(map(int, mj_version.split('.')[:2]))
+            is_mjx_compatible = version_parts >= (3, 2)
+            return mj_version, is_mjx_compatible
+        except ImportError:
+            return '0.0.0', False
+            
+    # Check if MJX is available
+    @staticmethod
+    def check_mjx_available():
+        try:
+            import mujoco.mjx
+            import mujoco
+            
+            # Check if MuJoCo is compatible version
+            mj_version = getattr(mujoco, '__version__', '0.0.0')
+            version_parts = tuple(map(int, mj_version.split('.')[:2]))
+            is_compatible_version = version_parts >= (3, 0)
+            
+            # Check if basic MJX functions exist, regardless of the specific API
+            has_step = hasattr(mujoco.mjx, 'step')
+            has_device_put = hasattr(mujoco.mjx, 'device_put')
+            has_put_model = hasattr(mujoco.mjx, 'put_model')
+            
+            if is_compatible_version and (has_step or has_device_put or has_put_model):
+                # Check if JAX is properly configured
+                try:
+                    import jax
+                    jax.devices()  # This will raise an error if JAX cannot initialize
+                    return True
+                except Exception:
+                    return False
+            return False
+        except (ImportError, AttributeError):
+            return False
 
     # resolve sim backend
     @staticmethod
@@ -27,10 +69,17 @@ class SimBackend(enum.Enum):
         sim_backend = os.getenv('sim_backend')
         if sim_backend == 'MUJOCO_PY':
             return SimBackend.MUJOCO_PY
+        elif sim_backend == 'MJX':
+            # Verify MJX is available before returning
+            if SimBackend.check_mjx_available():
+                return SimBackend.MJX
+            else:
+                print("Warning: MJX requested but not available. Falling back to MUJOCO.")
+                return SimBackend.MUJOCO
         elif sim_backend == 'MUJOCO' or sim_backend == None:
             return SimBackend.MUJOCO
         else:
-            raise ValueError("Unknown sim_backend: {}. Available choices: MUJOCO_PY, MUJOCO")
+            raise ValueError("Unknown sim_backend: {}. Available choices: MUJOCO_PY, MUJOCO, MJX")
 
 
 class SimScene(metaclass=abc.ABCMeta):
@@ -55,6 +104,9 @@ class SimScene(metaclass=abc.ABCMeta):
         elif backend == SimBackend.MUJOCO:
             from myosuite.physics import mj_sim_scene  # type: ignore
             return mj_sim_scene.DMSimScene(*args, **kwargs)
+        elif backend == SimBackend.MJX:
+            from myosuite.physics import mjx_sim_scene  # type: ignore
+            return mjx_sim_scene.MjxSimScene(*args, **kwargs)
         else:
             raise NotImplementedError(backend)
 
@@ -67,8 +119,10 @@ class SimScene(metaclass=abc.ABCMeta):
             return SimScene.create(model_handle=model_handle, backend=SimBackend.MUJOCO_PY)
         elif sim_backend == SimBackend.MUJOCO:
             return SimScene.create(model_handle=model_handle, backend=SimBackend.MUJOCO)
+        elif sim_backend == SimBackend.MJX:
+            return SimScene.create(model_handle=model_handle, backend=SimBackend.MJX)
         else:
-            raise ValueError("Unknown sim_backend: {}. Available choices: MUJOCO_PY, MUJOCO")
+            raise ValueError("Unknown sim_backend: {}. Available choices: MUJOCO_PY, MUJOCO, MJX")
 
 
     def __init__(
